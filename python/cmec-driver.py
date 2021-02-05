@@ -34,9 +34,9 @@ Add tests
 """
 from pathlib import Path
 import json
+import string
 import sys
 import os
-import string
 
 version = "20200731"
 cmec_library_name = ".cmeclibrary"
@@ -160,8 +160,7 @@ class CMECLibrary():
         """
         # Check if module already exists:
         if module_name in self.map_module_path_list:
-            print("Module already exists in library; if path has changed first run 'unregister'")
-            return
+            raise CMECError("Module already exists in library; if path has changed first run 'unregister'")
 
         if not isinstance(filepath, Path):
             if not isinstance(filepath, str):
@@ -251,6 +250,46 @@ class CMECModuleSettings():
                     "Malformed CMEC settings file "
                     + str(path_settings) + ": missing key settings:" + key)
                 # also check type
+
+    def CreateConfig(self, config_file, module_name=''):
+        """Adds module specific user settings to cmec config yaml"""
+        config_name = self.GetName()
+        if module_name != '':
+            config_name = module_name + '/' + config_name
+
+        # grab default user settings from module
+        module_settings = {}
+        if 'default_parameters' in self.jsettings:
+            module_config = self.jsettings['default_parameters']
+            module_settings.update({config_name: module_config})
+        else:
+            module_settings.update({config_name: {}})
+
+        # load existing cmec config or create new config
+        if config_file.exists():
+            with open(config_file, "r") as cfile:
+                all_settings = json.load(cfile)
+            # check that config isn't empty
+            if isinstance(all_settings, dict):
+                all_settings.update(module_settings)
+            else:
+                all_settings = module_settings
+        else:
+            all_settings = module_settings
+        with open(config_file, "w") as cfile:
+            json.dump(all_settings, cfile, indent=4)
+
+    def RemoveConfig(self, config_file, module_name=''):
+        config_name = self.GetName()
+        if module_name != '':
+            config_name = module_name + '/' + config_name
+        if config_file.exists():
+            with open(config_file,"r") as cfile:
+                all_settings = json.load(cfile)
+                if isinstance(all_settings, dict):
+                    all_settings.pop(config_name, None)
+            with open(config_file, "w") as cfile:
+                json.dump(all_settings, cfile, indent=4)
 
     def GetName(self):
         """Returns the module name."""
@@ -365,6 +404,23 @@ class CMECModuleTOC():
 
         self.jcmec["contents"][config_name] = str(filepath)
 
+    def CreateConfig(self, config_file, path_module):
+        """create module settings yaml for each configuration"""
+        for item in self.jcontents:
+            if isinstance(item, str):
+                cmec_settings = CMECModuleSettings()
+                path_settings = path_module / item
+                cmec_settings.ReadFromFile(path_settings)
+                cmec_settings.CreateConfig(config_file, self.getName())
+
+    def RemoveConfig(self, config_file, path_module):
+        for item in self.jcontents:
+            if isinstance(item, str):
+                cmec_settings = CMECModuleSettings()
+                path_settings = path_module/item
+                cmec_settings.ReadFromFile(path_settings)
+                cmec_settings.RemoveConfig(config_file, self.getName())
+
     def getName(self):
         """Return the name of the module"""
         return self.jcmec["module"]["name"]
@@ -388,7 +444,7 @@ class CMECModuleTOC():
         return False
 
 
-def cmec_register(module_dir):
+def cmec_register(module_dir, config_file):
     """Add a module to the cmec library.
 
     Args:
@@ -406,16 +462,16 @@ def cmec_register(module_dir):
     # check if module contains a settings file
     if cmec_settings.ExistsInmodule_path(module_dir):
         print("Validating " + cmec_settings_name)
-
         cmec_settings.ReadFromFile(module_dir / cmec_settings_name)
-
         str_name = cmec_settings.GetName()
+        cmec_settings.CreateConfig(config_file)
 
     # or check if module contains a contents file
     elif cmec_toc.ExistsInmodule_path(module_dir):
         print("Validating " + cmec_toc_name)
 
         cmec_toc.ReadFrommodule_path(module_dir)
+        cmec_toc.CreateConfig(config_file, module_dir)
 
         str_name = cmec_toc.getName()
         str_long_name = cmec_toc.getLongName()
@@ -444,7 +500,7 @@ def cmec_register(module_dir):
     lib.Write()
 
 
-def cmec_unregister(module_name):
+def cmec_unregister(module_name, config_file):
     """Remove a module from the cmec library.
 
     Args:
@@ -454,12 +510,22 @@ def cmec_unregister(module_name):
     lib = CMECLibrary()
     lib.Read()
 
+    print("Removing configuration")
+    module_dir = lib.find(module_name)
+    cmec_settings = CMECModuleSettings()
+    cmec_toc = CMECModuleTOC()
+    if cmec_settings.ExistsInmodule_path(module_dir):
+        cmec_settings.ReadFromFile(module_dir / cmec_settings_name)
+        cmec_settings.RemoveConfig(config_file)
+    elif cmec_toc.ExistsInmodule_path(module_dir):
+        cmec_toc.ReadFrommodule_path(module_dir)
+        cmec_toc.RemoveConfig(config_file, module_dir)
+
     print("Removing module")
     lib.Remove(module_name)
 
     print("Writing CMEC library")
     lib.Write()
-
 
 def cmec_list(listAll):
     """List modules in cmec library.
@@ -496,7 +562,7 @@ def cmec_list(listAll):
     print("------------------------------------------------------------")
 
 
-def cmec_run(strModelDir, strWorkingDir, module_list, strObsDir=""):
+def cmec_run(strModelDir, strWorkingDir, module_list, config_dir, strObsDir=""):
     """Run a module from the cmec library.
 
     Args:
@@ -631,6 +697,7 @@ def cmec_run(strModelDir, strWorkingDir, module_list, strObsDir=""):
     print("CMEC_MODEL_DATA=" + str(modpath))
     print("CMEC_WK_DIR=" + str(workpath) + "/$MODULE_NAME")
     print("CMEC_CODE_DIR=$MODULE_PATH")
+    print("CMEC_CONFIG_DIR=" + str(config_dir))
     print("------------------------------------------------------------")
 
     # Create output directories
@@ -661,7 +728,7 @@ def cmec_run(strModelDir, strWorkingDir, module_list, strObsDir=""):
         env_scripts.append(path_script)
         print(str(path_script))
         with open(path_script, "w") as script:
-            script.write("#!/bin/bash\nexport CMEC_CODE_DIR=%s\nexport CMEC_OBS_DATA=%s\nexport CMEC_MODEL_DATA=%s\nexport CMEC_WK_DIR=%s\n%s" % (module_path, obspath, modpath, path_working_dir, driver))
+            script.write("#!/bin/bash\nexport CMEC_CODE_DIR=%s\nexport CMEC_OBS_DATA=%s\nexport CMEC_MODEL_DATA=%s\nexport CMEC_WK_DIR=%s\nexport CMEC_CONFIG_DIR=%s\n%s" % (module_path, obspath, modpath, path_working_dir, config_dir, driver))
         os.system("chmod u+x " + str(path_script))
 
     # Execute command scripts
@@ -703,17 +770,20 @@ if __name__ == "__main__":
     # get the rest of the arguments
     args = parser.parse_args()
 
+    # cmec config goes in cmec-driver/config folder
+    config_file = Path(__file__).absolute().parents[1] / Path("config/cmec.json")
+
     # Register
     if args.command == "register":
         if args.modpath:
-            cmec_register(args.modpath)
+            cmec_register(args.modpath, config_file)
         else:
             print("Usage: python cmec-driver.py register <mod dir>")
 
     # Unregister
     if args.command == "unregister":
         if args.module:
-            cmec_unregister(args.module)
+            cmec_unregister(args.module, config_file)
         else:
             print("Usage: python cmec-driver.py unregister <mod dir>")
 
@@ -728,10 +798,11 @@ if __name__ == "__main__":
 
     # Execute
     if args.command == "run":
+        config_dir = config_file.parents[0]
         if (args.obs and args.model and args.output and args.module):
-            cmec_run(args.model, args.output, args.module, args.obs)
+            cmec_run(args.model, args.output, args.module, config_dir, args.obs)
         elif (args.model and args.output and args.module):
-            cmec_run(args.model, args.output, args.module)
+            cmec_run(args.model, args.output, args.module, config_dir)
         else:
             print(
                 "Usage: python cmec-driver.py run "

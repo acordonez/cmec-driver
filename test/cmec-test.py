@@ -117,12 +117,12 @@ def test_register(module_path):
     os.system("python ../src/cmec-driver.py register " + module_path)
     print("\nCMEC Library:")
     os.system("cat ~/.cmeclibrary")
-
+    print("\nCMEC config:")
+    os.system("cat ../config/cmec.json")
 
 def test_unregister(module_name):
     """Unregister test module."""
     os.system("python ../src/cmec-driver.py unregister " + module_name)
-
 
 def test_list(listall=True):
     """List the registered modules."""
@@ -130,7 +130,6 @@ def test_list(listall=True):
         os.system("python ../src/cmec-driver.py list -all")
     else:
         os.system("python ../src/cmec-driver.py list")
-
 
 def test_run(module_name, obs=True):
     """Run the test module."""

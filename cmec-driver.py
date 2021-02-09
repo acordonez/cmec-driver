@@ -275,7 +275,9 @@ class CMECModuleSettings():
             else:
                 all_settings = module_settings
         else:
+            # create config if it doesn't exist
             all_settings = module_settings
+            config_file.mkdir(parents=True)
         with open(config_file, "w") as cfile:
             json.dump(all_settings, cfile, indent=4)
 
@@ -771,7 +773,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # cmec config goes in cmec-driver/config folder
-    config_file = Path(__file__).absolute().parents[1] / Path("config/cmec.json")
+    config_file = Path(__file__).absolute().parents[0] / Path("config/cmec.json")
 
     # Register
     if args.command == "register":
